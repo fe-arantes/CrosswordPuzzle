@@ -151,6 +151,7 @@
     transition:background .15s,border-color .15s,box-shadow .15s;
   }
   .cell input:focus{outline:none}
+  .cell input::selection{background:transparent}
   .cell .num{
     position:absolute;top:1px;left:3px;font-size:max(8px,calc(var(--cell)*.27));font-weight:700;
     color:var(--num);pointer-events:none;line-height:1;
@@ -985,13 +986,12 @@
   });
 
   /* links dos 13 filmes na tela final */
-  /* 2 colunas; o título mais longo fica sozinho na linha do meio, ocupando as duas */
+  /* 2 colunas; o título mais longo fecha a lista, sozinho na última linha, ocupando as duas */
   var finFilms = document.getElementById("finFilms");
   var films = ORDER.filter(function(idx){ return WORDS[idx].url; });
   var longest = films.reduce(function(a, b){ return WORDS[b].label.length > WORDS[a].label.length ? b : a; }, films[0]);
   var rest = films.filter(function(idx){ return idx !== longest; });
-  var mid = Math.floor(rest.length / 4) * 2;      // 12 → depois do 6º (3 linhas em cima, 3 embaixo)
-  rest.slice(0, mid).concat([longest], rest.slice(mid)).forEach(function(idx){
+  rest.concat([longest]).forEach(function(idx){
     var w = WORDS[idx];
     var a = document.createElement("a");
     a.href = w.url; a.target = "_blank"; a.rel = "noopener";
@@ -1153,9 +1153,9 @@
     for (var i = 0; i < list.length; i++) if (!cells[list[i]].input.value) return list[i];
     return null;
   }
+  /* sempre começa na primeira casa: dá para digitar a palavra inteira, inclusive as letras dos cruzamentos */
   function goTo(idx){
-    var w = WORDS[idx];
-    focusCell(firstEmpty(idx) || wordCells(idx)[0], w.d);
+    focusCell(wordCells(idx)[0], WORDS[idx].d);
   }
   /* próxima (ou anterior) palavra na lista; com onlyOpen, pula as já preenchidas */
   function jumpWord(step, onlyOpen){
@@ -1167,15 +1167,15 @@
     }
     return false;
   }
-  /* depois de digitar: próxima casa vazia da palavra; se ela encheu, próxima palavra em aberto */
+  /* depois de digitar: anda casa por casa (sem pular as já preenchidas, para não desalinhar quem
+     digita a palavra inteira); no fim, volta à 1ª vazia da palavra ou segue para a próxima em aberto */
   function advance(){
     var idx = cells[activeKey].words[dir], list = wordCells(idx);
     var pos = list.indexOf(activeKey);
-    for (var i = pos + 1; i < list.length; i++)
-      if (!cells[list[i]].input.value){ focusCell(list[i], dir); return; }
-    for (var j = 0; j < pos; j++)
-      if (!cells[list[j]].input.value){ focusCell(list[j], dir); return; }
-    if (!jumpWord(1, true) && list[pos + 1]) focusCell(list[pos + 1], dir);
+    if (list[pos + 1]){ focusCell(list[pos + 1], dir); return; }
+    var empty = firstEmpty(idx);
+    if (empty){ focusCell(empty, dir); return; }
+    jumpWord(1, true);
   }
   function stepBack(){
     var idx = cells[activeKey].words[dir], list = wordCells(idx);
@@ -1324,11 +1324,18 @@
 
   KEYS.forEach(function(k){
     var input = cells[k].input;
-    var wasActive = false, pending229 = false;
+    var wasActive = false, pending229 = false, before = "";
 
     input.addEventListener("mousedown", function(){ wasActive = (activeKey === k); });
     input.addEventListener("touchstart", function(){ wasActive = (activeKey === k); }, {passive:true});
-    input.addEventListener("focus", function(){ if (activeKey !== k) selectCell(k); });
+    input.addEventListener("focus", function(){
+      if (activeKey !== k) selectCell(k);
+      // seleciona a letra existente: digitar por cima substitui
+      // (só se ela ainda estiver em foco: select() numa casa antiga puxaria o foco de volta)
+      setTimeout(function(){
+        if (document.activeElement === input){ try { input.setSelectionRange(0, input.value.length); } catch(e){} }
+      }, 0);
+    });
     input.addEventListener("click", function(){
       if (wasActive){
         var cell = cells[k];
@@ -1339,7 +1346,13 @@
 
     input.addEventListener("input", function(){
       pending229 = false;
-      var letter = input.value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z]/g, "").toUpperCase().slice(-1);
+      var raw = input.value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z]/g, "").toUpperCase();
+      // se a letra antiga não foi substituída (cursor antes/depois dela), fica com a nova
+      var letter = raw.slice(-1);
+      if (raw.length > 1 && before){
+        if (raw.indexOf(before) === 0) letter = raw.slice(before.length).slice(-1) || letter;
+        else if (raw.lastIndexOf(before) === raw.length - before.length) letter = raw.slice(0, raw.length - before.length).slice(-1) || letter;
+      }
       if (celebrating && activeKey === k){
         if (letter){
           // digitou durante a pausa: encerra a comemoração e leva a letra para a próxima casa
@@ -1355,6 +1368,7 @@
 
     /* Android (Gboard e afins): backspace numa casa vazia não gera keydown "Backspace" */
     input.addEventListener("beforeinput", function(e){
+      before = input.value;
       if (e.inputType === "deleteContentBackward" && input.value === ""){
         e.preventDefault();
         pending229 = false;
